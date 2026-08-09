@@ -1,0 +1,90 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+    margin: 0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background-color: #FAFAFA;
+    color: #0F172A;
+}
+
+@layer base {
+    :root {
+        --background: 0 0% 98%;
+        --foreground: 222 47% 11%;
+        --card: 0 0% 100%;
+        --card-foreground: 222 47% 11%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 222 47% 11%;
+        --primary: 217 89% 42%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 210 40% 96%;
+        --secondary-foreground: 222 47% 11%;
+        --muted: 210 40% 96%;
+        --muted-foreground: 215 16% 47%;
+        --accent: 210 40% 96%;
+        --accent-foreground: 222 47% 11%;
+        --destructive: 0 72% 51%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 214 32% 91%;
+        --input: 214 32% 91%;
+        --ring: 217 89% 42%;
+        --chart-1: 217 89% 42%;
+        --chart-2: 160 84% 39%;
+        --chart-3: 38 92% 50%;
+        --chart-4: 0 84% 60%;
+        --chart-5: 0 63% 33%;
+        --radius: 0.75rem;
+    }
+}
+
+@layer base {
+    * { @apply border-border; }
+    body { @apply bg-background text-foreground; }
+    h1, h2, h3, h4 { font-family: 'Outfit', sans-serif; }
+}
+
+/* Glassmorphism card for map overlays */
+.glass {
+    background: rgba(255, 255, 255, 0.82);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    box-shadow: 0 10px 30px -12px rgba(15, 23, 42, 0.25);
+}
+
+/* Heat level backgrounds */
+.heat-low { background-color: #10B981; }
+.heat-moderate { background-color: #F59E0B; }
+.heat-high { background-color: #EF4444; }
+.heat-extreme { background-color: #991B1B; }
+
+.heat-text-low { color: #059669; }
+.heat-text-moderate { color: #D97706; }
+.heat-text-high { color: #DC2626; }
+.heat-text-extreme { color: #991B1B; }
+
+/* Entrance animation */
+@keyframes fade-up {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.fade-up { animation: fade-up 0.5s ease-out both; }
+
+/* SOS pulse */
+@keyframes sos-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.55); }
+    70% { box-shadow: 0 0 0 22px rgba(220, 38, 38, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+}
+.sos-pulse { animation: sos-pulse 1.8s infinite; }
+
+::selection { background: #0A58CA; color: #fff; }
+
+/* hide scrollbar for chat */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }

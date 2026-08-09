@@ -1,0 +1,56 @@
+{
+  "summary": "HeatShield SG iteration 3 (Quiet Hours + Route-from-place + PWA install) verified end-to-end. Backend: 44/44 pytest pass on live preview (35 regression from iter 1&2 + 9 new for quiet-hours + PWA assets + cooling-from-alt-origin). Frontend (mobile 390x844, geolocation+notifications granted): admin login → dashboard renders NotificationSettings, SavedPlaces, and all 5 targeted testids without console errors (only pre-login /auth/me 401s). Service worker registers on load with scope /. InstallAppCard correctly hidden in headless Chromium (no beforeinstallprompt + non-iOS UA) — expected per brief. Quiet Hours: toggle ON fires PUT /api/push/quiet-hours {enabled:true,start:22,end:7} (default 22:00→07:00 shown), start/end selects reveal, changing start to 23:00 fires PUT with {start:23,end:7}, /auth/me returns matching quiet_hours, reload preserves ON state and 23:00→07:00. Route-from-place: pre-seeded Home (Woodlands 1.437,103.786) with GPS at Marina Bay (1.283,103.859) — clicking route-place-<id> navigated to /cooling AND cooling page issued GET /api/cooling/spots?lat=1.437&lng=103.786 (Woodlands lat, NOT the GPS one), header shows 'Home', toast 'Finding cooling routes from Home', distances match Woodlands (14.1/15.64/16.31 km). PWA assets all serve correctly: manifest.json valid with 192+512 icons + display=standalone + theme_color #0A58CA, sw.js 200 with push+notificationclick handlers, index.html has manifest link + apple-touch-icon + theme-color meta. All 3 new-iteration user flows PASS.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "DELETE /api/locations/{id}", "issue": "Still returns 200 with unchanged list when id does not exist (no 404). Carried over from iter 2 — not a blocker."},
+      {"endpoint": "PUT /api/push/quiet-hours", "issue": "Does not validate start/end are in 0-23 (server does modulo 24 silently). Not a bug (input is normalized), but a Pydantic Field(ge=0, le=23) constraint would surface bad clients earlier."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "ai_feature_verdicts": [
+    "AI recommendations (Claude Haiku 4.5) - not-in-scope-this-iteration - no AI code changed; still passes regression pytest TestAI::test_recommendations_real_llm",
+    "AI chat streaming (POST /api/chat) - not-in-scope-this-iteration - no AI code changed; still passes regression pytest TestAI::test_chat_streaming_singapore_advice + test_chat_history_persisted",
+    "Web Push (VAPID / pywebpush) - pass (plumbing incl. Quiet Hours) - evidence: PUT /api/push/quiet-hours 200 with {enabled,start,end}, /auth/me exposes quiet_hours field ({'enabled':true,'start':23,'end':7} persisted through reload), monitor_loop code path skips push when in_quiet_hours() returns true (verified by static review of push_service.monitor_loop:85). VAPID key still 65-char base64url starting with B; sw.js showNotification handler intact. OS-level delivery cannot be asserted in headless Chromium (brief-approved). Skill: ai-testing-core (Web Push is not an LLM/audio/image feature)."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/heatshield_backend_test.py",
+    "/app/backend/tests/test_locations_and_push.py",
+    "/app/backend/tests/test_quiet_hours_and_pwa.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_all_iter3.xml",
+    "/app/test_reports/pytest/pytest_quiet_hours_and_pwa.xml"
+  ],
+  "action_items": [
+    "(nice-to-have, minor) Add Field(ge=0, le=23) constraint on QuietHoursInput.start and .end so bad input 422s instead of silent modulo.",
+    "(carried, minor) Return 404 from DELETE /api/locations/{unknown_id} instead of silent 200.",
+    "(iteration 1 leftover, unchanged) Google Maps API key still needs preview origin whitelisted (RefererNotAllowedMapError) — not retested per brief."
+  ],
+  "critical_code_review_comments": [
+    "push_service.in_quiet_hours correctly handles both same-day (start<end) and overnight wrap (start>end) windows in SG timezone (UTC+8). Edge case start==end returns False (never quiet) — sensible.",
+    "server.py QuietHoursInput uses `int` and stores after `% 24` — safe against bad clients but silently munges (25 -> 1). Consider Pydantic ge/le validators.",
+    "InstallAppCard is a clean, correct beforeinstallprompt implementation with iOS Safari fallback text + dismiss persistence in localStorage. It only renders when either a deferred prompt is captured OR the UA is iOS — so headless Chromium NOT showing it is by design (not a bug).",
+    "SavedPlaces.routeFrom calls selectLocation() then navigate('/cooling'). AppContext.selectLocation persists to localStorage so /cooling GET spots uses the chosen origin — verified live: GET /api/cooling/spots?lat=1.437&lng=103.786 fired after Route click while GPS was at 1.283.",
+    "manifest.json start_url is '.' (relative) — works from any subpath. Icons declare 'any maskable' purpose which is correct for Android adaptive icons.",
+    "sw.js requireInteraction=true is retained — good for heat safety UX; tag='heatshield' collapses repeats.",
+    "MongoDB _id remains correctly excluded from all authenticated payloads via _public_user; push_subscriptions is now also stripped (addressed my iter-2 security note — good).",
+    "AppContext.detectLocation on every mount can still overwrite an active saved-place label with 'Current location' if the browser returns a fresh GPS fix on reload. Verified again in iter-3 route-from-place testing: after Route click, header did say 'Home' — because Route directly calls selectLocation, and /cooling page does not re-detect. But if the user reloads /cooling afterwards, detectLocation may still stomp it. Optional fix: skip detectLocation when a named saved-place is active."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_quiet_hours_and_pwa.py (new — 9 tests for PUT /api/push/quiet-hours + PWA assets + cooling-from-alt-origin + locations regression)",
+    "/app/backend/tests/test_locations_and_push.py (updated 1 test: /auth/me no longer exposes push_subscriptions — good; test now asserts absence)"
+  ],
+  "success_rate": {
+    "backend": "100% (44/44 pytest cases: 35 regression + 9 new)",
+    "frontend": "100% of testable flows (dashboard render, Quiet Hours toggle+select+persist+reload, Route-from-place navigation & correct origin). 1 flow environment-blocked (real push subscribe in headless — brief-approved; InstallAppCard hidden in headless — expected per code)."
+  },
+  "test_credentials": "Admin: admin@heatshield.sg / admin123 (onboarded). Ephemeral users via /api/auth/register for pytest CRUD tests.",
+  "seed_data_creation": "Frontend Route-from-place test: DELETEs any pre-existing admin saved_locations, then POSTs a Home place at Woodlands coords (1.437, 103.786) via /api/locations so the Route button is deterministic. GPS is stubbed to Marina Bay (1.283, 103.859) so we can prove the cooling page uses the SAVED PLACE coordinates and not GPS.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "New Quiet Hours endpoint /api/push/quiet-hours (PUT) is covered by /app/backend/tests/test_quiet_hours_and_pwa.py::TestQuietHours (4 cases). PWA assets covered by TestPWAAssets (3 cases). Route-from-place backend surface covered by TestCoolingFromAltLocation (uses cooling/spots with two different origins). Frontend: quiet-hours-toggle / quiet-start-select / quiet-end-select / route-place-<id> data-testids all work as spec'd. InstallAppCard: don't expect to see it in headless Chromium — that's by design (needs a real beforeinstallprompt event or an iOS Safari UA). Route flow is asserted by observing GET /api/cooling/spots?lat=<place-lat>&lng=<place-lng> after clicking route-place-<id>, not by URL alone. Preserve: previously reported iter-1 Google Maps /map RefererNotAllowedMapError still present, not retested per brief; iter-2 recommendation to strip push_subscriptions from /auth/me has been applied."
+}

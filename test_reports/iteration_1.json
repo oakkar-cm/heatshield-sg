@@ -1,0 +1,59 @@
+{
+  "summary": "HeatShield SG full-stack MVP tested. Backend: 24/24 pytest cases pass against live preview URL (NEA data, cooling routes, emergency, JWT cookie auth, profile, personalised risk, Claude Haiku 4.5 recommendations, streaming /api/chat + persisted history). Frontend: register→onboarding→dashboard, admin login, dashboard cards (heat/risk/stats/recs/forecast/nearest cool), Cooling page + route detail + Open in Maps, Emergency SOS countdown+cancel, symptom-check returning 'Possible Heat Stroke' for confusion+fainting, prepare tab (WBGT + checklists), Chat streaming (real Claude reply rendered), simplified toggle all working. AI features verified with real (non-fallback) outputs. PRIMARY MAP FEATURE BLOCKED: Google Maps JS API returns RefererNotAllowedMapError on /map — the user's REACT_APP_GOOGLE_MAPS_API_KEY does not have the preview origin whitelisted. This is a user-provided-key config issue, not app code.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Heat-risk map (/map)",
+        "issue": "blocked: needs-key-config — Google Maps JS API refuses to render with `RefererNotAllowedMapError`. Page shows the standard Google error card 'Oops! Something went wrong. This page didn't load Google Maps correctly.'. WBGT overlays/markers cannot render until fixed. User must add `https://wbgt-shield.preview.emergentagent.com/*` (and any custom domain) to the API key's HTTP referrer restrictions in Google Cloud Console, or remove restrictions. App code is correct.",
+        "affected_selectors": ["[data-testid=\"map-info-panel\"]", "toggle-rain-btn (renders, but map itself fails)"]
+      }
+    ],
+    "design_issues": []
+  },
+  "ai_feature_verdicts": [
+    "AI recommendations (Claude Haiku 4.5 via EMERGENT_LLM_KEY) - pass - evidence: GET /api/recommendations returned 4 tailored non-fallback tips e.g. 'Drink a glass of water now and refill your bottle—even at low risk, staying hydrated is your first line of defense.', 'If heading outdoors, wear light-coloured, loose clothing and apply sunscreen…', 'Take a 10–15 minute break in an air-conditioned space (mall, office, or HDB void deck) every 1–2 hours…', 'Keep an eye on the NEA website; if WBGT rises above 32°C, shift any outdoor plans to early morning or evening.' — asserted != hardcoded fallback list; skill: ai-testing-llm",
+    "AI chat streaming (POST /api/chat) - pass - evidence: two sessions streamed real, on-topic Singapore heat advice; browser render: user asked 'In one sentence, what should elderly do during high WBGT?' → assistant streamed 'During high WBGT, elderly should stay indoors in air-conditioned spaces (homes, malls, community centres), drink water regularly, and avoid going out during peak heat hours (11am–3pm).'. Off-topic math probe was correctly refused (topic-locked persona) → confirms real LLM (not silent fallback); skill: ai-testing-llm",
+    "AI chat history persistence (GET /api/chat/history) - pass - evidence: after streamed reply, GET returned user+assistant messages with real content; command: pytest TestAI::test_chat_history_persisted",
+    "NEA live data (conditions/wbgt/rainfall/humidity/forecast) - pass - evidence: /api/conditions returned heat_level=low, WBGT 25.9°C, air 29.9°C, humidity 67.2%, station 'MacRitchie Reservoir' from live NEA data.gov.sg; command: curl/pytest TestHealthAndNEA",
+    "Google Maps JS (heat map page) - blocked: needs-key-config - evidence: browser console 'Google Maps JavaScript API error: RefererNotAllowedMapError' and Google's own 'Oops! Something went wrong' overlay on /map; page.evaluate found 0 rendered .gm-style divs. Fix: authorize preview origin on the key in GCP console."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/heatshield_backend_test.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Google Maps API key: whitelist `https://wbgt-shield.preview.emergentagent.com/*` (and any custom deploy domain) in Google Cloud Console -> APIs & Services -> Credentials -> HTTP referrers, OR remove referrer restrictions for this key. Also enable 'Maps JavaScript API'. Without this fix, /map is unusable.",
+    "(nice-to-have) Migrate from deprecated `google.maps.Marker` to `google.maps.marker.AdvancedMarkerElement` — Google prints a console warning on every map load."
+  ],
+  "critical_code_review_comments": [
+    "Auth cookies use samesite='none' with secure=True — correct for cross-site preview→api on managed domain (both HTTPS). Works. Any localhost dev over http will not persist cookies (secure=True).",
+    "backend/sg_data.py: HEAT_STROKE_FLAGS logic and assess_symptoms deterministic – correctly returns Possible Heat Stroke for confusion/fainting. Verified.",
+    "ai_service.get_recommendations has hardcoded fallback list (Stay hydrated / Avoid midday sun / …). Tests confirm current runs return real LLM output, not fallback. Consider logging when fallback fires so a silent LLM outage is visible.",
+    "server.py /api/chat consumes NEA in the streaming handler when lat/lng passed — swallows exceptions silently. Fine, but worth logging failures for observability.",
+    "MongoDB `_id` correctly excluded from all authenticated user payloads via _public_user helper. Good.",
+    "Rate-limiting present (login lockout after 5 fails per ip+email) — verified path exists in auth._check_lockout / _record_failure. Not exercised in this run (would lock admin account for 15 min).",
+    "Frontend: on /chat, if fetch stream errors mid-way the last assistant bubble is replaced with generic 'Sorry, I couldn't respond just now.' — good UX, but the error is swallowed (no toast). Consider surfacing.",
+    "Frontend: Dashboard aborts in-flight requests on unmount produce net::ERR_ABORTED entries in console. Harmless, but could be quieted with axios AbortController & silent-on-cancel check."
+  ],
+  "updated_files": [
+    "/app/backend/tests/heatshield_backend_test.py",
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/__init__.py"
+  ],
+  "success_rate": {
+    "backend": "100% (24/24 pytest cases)",
+    "frontend": "6/7 primary flows pass; 1 blocked (map render) due to Google Maps referrer restriction on user-provided key"
+  },
+  "test_credentials": "Admin: admin@heatshield.sg / admin123 (already onboarded). Also register any @heatshield.sg email via /register.",
+  "seed_data_creation": "Ephemeral test users created via /api/auth/register during pytest (deleted-account cleanup not automated; safe because emails are uuid-prefixed and test DB is separate).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All backend endpoints verified via /app/backend/tests/heatshield_backend_test.py — 24 pass. Uses fixtures in tests/conftest.py (admin_client, new_user_client). Live NEA fetch works. LLM (Claude Haiku 4.5 via EMERGENT_LLM_KEY) works for both /api/recommendations and streaming /api/chat. Frontend fully functional except /map, which needs the user to authorize the preview origin on their REACT_APP_GOOGLE_MAPS_API_KEY (blocked, not a code bug). Do NOT change ai code, waits, or Google key value to force map to load.",
+  "rca_of_the_map_issue": "Root cause: Google Maps JS SDK refuses to serve tiles/markers with error `RefererNotAllowedMapError` because the HTTP-referrer restriction on the key (in Google Cloud Console) does not include `https://wbgt-shield.preview.emergentagent.com`. Reproduction: log in as admin, navigate to /map; error card appears and console shows 'Google Maps JavaScript API error: RefererNotAllowedMapError'. Mitigation: user adds preview origin (and future deploy origin) to key's referrer allow-list in GCP, or removes restrictions. Alternative code-side workaround: use a less-restricted key for prototype, or fall back to a simple leaflet+OSM map when GMaps init fails (defensive UI)."
+}

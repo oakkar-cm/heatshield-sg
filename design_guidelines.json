@@ -1,0 +1,137 @@
+{
+  "app_identity": {
+    "name": "HeatShield SG",
+    "mission": "A digital sanctuary. When it is 36°C and sweltering outside, this app must feel cool, calm, dark, and protective. It is a premium health-tech tool, not a generic weather app.",
+    "emotional_archetype": "The Performance Pro mixed with Luxury. Precision, calm authority, and high-end tactility."
+  },
+  "theme_and_vibe": {
+    "primary_mode": "dark",
+    "background": "Deep Obsidian (#0A0A0A) to Midnight Slate (#0B0F19). This creates the ultimate contrast for the glowing heat indicators.",
+    "surfaces": "Crystal Glassmorphism. High opacity backgrounds (bg-black/60) with heavy blur (backdrop-blur-2xl) and a delicate 1px border (border-white/10). No muddy greys."
+  },
+  "color_system": {
+    "base": {
+      "background": "#0B0F19",
+      "surface_glass": "rgba(11, 15, 25, 0.6)",
+      "surface_solid": "#161B26",
+      "text_primary": "#F8FAFC",
+      "text_secondary": "#94A3B8"
+    },
+    "heat_scale": {
+      "green_low": {
+        "hex": "#10B981",
+        "glow": "rgba(16, 185, 129, 0.4)",
+        "description": "Emerald/Mint. Represents safety, cool spots, and optimal conditions."
+      },
+      "amber_moderate": {
+        "hex": "#F59E0B",
+        "glow": "rgba(245, 158, 11, 0.4)",
+        "description": "Rich Gold. Represents caution, stay hydrated."
+      },
+      "red_high": {
+        "hex": "#E11D48",
+        "glow": "rgba(225, 29, 72, 0.4)",
+        "description": "Ruby/Crimson. Represents danger, seek shade immediately. Avoid standard harsh alarm red."
+      }
+    }
+  },
+  "typography": {
+    "heading_font": "Outfit or Cabinet Grotesk. High-end, geometric, and authoritative. Use tight tracking (tracking-tight) for large headers.",
+    "body_font": "Manrope or IBM Plex Sans. Highly legible, great for numbers and data.",
+    "hierarchy": {
+      "h1": "text-5xl md:text-6xl font-medium tracking-tight",
+      "h2": "text-3xl md:text-4xl font-normal",
+      "data_value": "text-4xl md:text-5xl font-light",
+      "body": "text-base leading-relaxed text-slate-300"
+    }
+  },
+  "copywriting_rules": {
+    "jargon_free": "NEVER use the term 'WBGT' or 'Heat Stress Index'.",
+    "replacements": {
+      "WBGT": "Feels-like heat",
+      "Heat Stress Index": "Personal Heat Risk",
+      "Thermal Comfort": "Cooling Level"
+    },
+    "tone": "Calm, direct, empathetic, and jargon-free."
+  },
+  "layouts_and_grids": {
+    "spacing": "Generous. Use p-6, p-8, and gap-6. Let the data breathe.",
+    "desktop": "Bento-box grid style (grid-cols-12) with an asymmetrical layout. Sidebar navigation.",
+    "mobile": "Bottom navigation bar with a distinct, floating central 'Home/Heat' action button. Stacked cards with generous vertical rhythm."
+  },
+  "components": {
+    "hero_heat_orb": {
+      "description": "The centerpiece of the dashboard. A 3D-like, glowing orb or tactile dial representing the current heat level.",
+      "implementation": "Use Framer Motion to create a slow-breathing scale animation (1 to 1.02). Use radial gradients to simulate a 3D sphere. Drop shadow with the current heat scale color for a 'glow' effect."
+    },
+    "forecast_chart": {
+      "description": "Next hours forecast.",
+      "implementation": "Use Recharts. Hide grid lines. Use a smooth curved Area chart. The area should be a gradient of the heat scale (e.g., green to amber)."
+    },
+    "cool_spot_card": {
+      "description": "Nearest mall or park.",
+      "style": "Glass card with a background image of the location overlaid with a dark gradient (bg-gradient-to-t from-black/80 to-transparent) to ensure text readability."
+    },
+    "ai_chat": {
+      "description": "Floating or dedicated view for AI advisory.",
+      "style": "Neumorphic message bubbles. The AI's messages should have a subtle tint of the current heat risk color."
+    }
+  },
+  "simplified_mode_rules": {
+    "target_audience": "Elderly and vulnerable users.",
+    "visual_changes": [
+      "Disable all glassmorphism and 3D blur effects. Use solid, high-contrast flat backgrounds (#161B26).",
+      "Increase base font size by 1.25x.",
+      "Change heat scale to absolute stark colors for maximum contrast.",
+      "Increase all button hit areas to minimum h-16 (64px).",
+      "Change layout from Bento Grid to a single-column stacked list.",
+      "Add explicit text labels next to all icons."
+    ]
+  },
+  "motion_and_3d": {
+    "interactions": "Hover tilt on desktop cards (using Framer Motion), subtle parallax on scroll.",
+    "transitions": "Use spring animations for layout changes (e.g., toggling Simplified Mode).",
+    "accessibility": "Respect prefers-reduced-motion CSS media query. Disable hover tilts and breathing orb if true."
+  },
+  "image_urls": {
+    "cooling_spot_mall": {
+      "url": "https://images.unsplash.com/photo-1691421123450-7f79538902ae?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxNzV8MHwxfHNlYXJjaHw0fHxtb2Rlcm4lMjBtYWxsJTIwaW50ZXJpb3J8ZW58MHx8fHwxNzg2Mjc3MzIzfDA&ixlib=rb-4.1.0&q=85",
+      "description": "A bright, modern multi-level mall with indoor trees and air conditioning. Use for 'Nearest Cool Spot - Mall'."
+    },
+    "cooling_spot_park": {
+      "url": "https://images.unsplash.com/photo-1652509950748-16899ae548e4?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTJ8MHwxfHNlYXJjaHwxfHxzaW5nYXBvcmUlMjBwYXJrJTIwc2hhZGV8ZW58MHx8fHwxNzg2Mjc3MzIzfDA&ixlib=rb-4.1.0&q=85",
+      "description": "Large shaded tree in a park. Use for 'Nearest Cool Spot - Park'."
+    },
+    "elderly_user_context": {
+      "url": "https://images.unsplash.com/photo-1770991364763-c78a6e6febce?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzN8MHwxfHNlYXJjaHwzfHxlbGRlcmx5JTIwYXNpYW4lMjB1c2luZyUyMHBob25lfGVufDB8fHx8MTc4NjI3NzMyM3ww&ixlib=rb-4.1.0&q=85",
+      "description": "Elderly Asian men looking at a phone. Use for Onboarding or Caregiver context."
+    }
+  },
+  "instructions_to_main_agent": [
+    "This is a hybrid mobile-first PWA and desktop dashboard. Use Tailwind's responsive prefixes (e.g., flex-col md:flex-row) to manage the layout.",
+    "All components must be written in standard Javascript React (.js/.jsx), NOT TypeScript (.tsx). Remove all type annotations.",
+    "Implement a 'Simplified Mode' toggle state at the top level (e.g., React Context or top-level state) that passes a 'isSimplified' prop down to alter UI classes dynamically.",
+    "Use 'lucide-react' for all standard icons, ensuring they have an aria-label.",
+    "For the interactive Google Map, you can mock the map visually using an image or a styled div if an API key isn't provided, but structure the layout to accommodate a full bleed map container.",
+    "Use Framer Motion to animate the hero 'Heat Orb' and the transition between standard and Simplified mode.",
+    "Use Shadcn UI for standard components like Dialogs (for SOS/Emergency), Switch (for toggle), and Tabs, but override their default borders and backgrounds to match the luxury glassmorphism specs."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. In frontend design, this creates what users call the 'AI slop' aesthetic. Avoid this: make creative, distinctive frontends that surprise and delight.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+    "You MUST NOT apply universal transition. Eg: transition: all. This results in breaking transforms. Always add transitions for specific interactive elements like button, input excluding transforms.",
+    "You MUST NOT center align the app container, ie do not add .App { text-align: center; } in the css file. This disrupts the human natural reading flow of text.",
+    "Always use modern button styles like pill-shaped, or sharp button with interaction animations & color relevant to the app style.",
+    "NEVER use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons.",
+    "Every interaction needs micro-animations - hover states, transitions, parallax effects, and entrance animations. Static = dead.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Subtle grain textures, noise overlays, custom cursors, selection states, and loading animations: separates good from extraordinary.",
+    "Prioritize using pre-existing components from src/components/ui when applicable.",
+    "Create new components that match the style and conventions of existing components when needed.",
+    "Use sonner for toasts. Sonner component are located in /app/src/components/ui/sonner.tsx.",
+    "All interactive and key informational elements MUST include a data-testid attribute to facilitate robust automated testing."
+  ]
+}

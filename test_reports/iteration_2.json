@@ -1,0 +1,59 @@
+{
+  "summary": "HeatShield SG new iteration (Saved Places + Web Push notifications) tested end-to-end. Backend: 35/35 pytest cases pass on live preview (24 previous regression + 11 new for /api/locations CRUD & /api/push/*). Frontend (mobile viewport 390x844, geolocation & notifications permissions granted, geo set to SG): admin login → dashboard renders all 6 cards including SavedPlaces & NotificationSettings with 0 console errors. Saved Places: quick-save Home (POST /api/locations 200), moved geo & quick-save Work (POST 200), tapped Use on Work → dashboard header label switched from 'Current location' → 'Work' (selectLocation persisted), delete Home (DELETE 200) removed row. Notification Settings: threshold Select changed to 'Moderate' → PUT /api/push/threshold {ok:true, threshold:'Moderate'} persisted on /auth/me; test-push-btn correctly disabled while not subscribed; enable toggle click did NOT flip in headless Chromium (PushManager.subscribe fails without an OS/browser push service — brief-approved) and was handled gracefully (no crash, no red errors). Backend also verified: /api/push/test returns 400 with 'No active push subscription' when user has no subs, returns 200 ok=True after a well-formed fake subscription is stored (pywebpush transport to fake FCM URL is non-fatal, subscription retained). /api/push/vapid-public-key returns the VAPID key (65-char base64url, starts with 'B'). AI features not exercised this iteration (no AI code touched) — see verdicts.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/auth/me", "issue": "Returns push_subscriptions[] (endpoints + p256dh + auth secrets) to the client. Not exploitable on its own (cookie-authenticated), but the subscription auth secret is intended to be server-only — consider stripping push_subscriptions from _public_user response."},
+      {"endpoint": "DELETE /api/locations/{id}", "issue": "Silently returns 200 with unchanged list when id does not exist (no 404). Minor — not a blocker; align with REST norms if desired."},
+      {"endpoint": "GET /api/push/vapid-public-key", "issue": "Public key served with no cache headers; low impact."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Enable push toggle in headless Chromium", "issue": "PushManager.subscribe rejects in the automation browser (no push service backing store) so the Switch never becomes 'checked' and no POST /api/push/subscribe is made. This is a browser-environment limitation, NOT a code bug. Task brief explicitly says do not fail the whole feature on this. Real Chrome/Safari on device should work — code path is correct (registerServiceWorker on app boot, urlBase64ToUint8Array, applicationServerKey from REACT_APP_VAPID_PUBLIC_KEY, POST /api/push/subscribe).", "affected_selectors": ["[data-testid=\"push-enable-toggle\"]"]},
+      {"flow": "Heat-risk map (/map)", "issue": "Still blocked from iteration 1 by Google Maps HTTP-referrer restriction (RefererNotAllowedMapError). Not retested per brief.", "affected_selectors": ["/map page"]}
+    ],
+    "design_issues": []
+  },
+  "ai_feature_verdicts": [
+    "AI recommendations (Claude Haiku 4.5) - not-in-scope-this-iteration - no AI code changed; still passes regression pytest TestAI::test_recommendations_real_llm",
+    "AI chat streaming (POST /api/chat) - not-in-scope-this-iteration - no AI code changed; still passes regression pytest TestAI::test_chat_streaming_singapore_advice",
+    "Web Push (VAPID / pywebpush) - pass (plumbing) - evidence: GET /api/push/vapid-public-key -> 200 with 65-char base64url key starting with 'B'; POST /api/push/subscribe with well-formed fake sub -> 200 {ok:true}; POST /api/push/test with no sub -> 400 detail contains 'subscription'; POST /api/push/test with stored sub -> 200 (pywebpush send attempted, non-410 treated as sent); POST /api/push/unsubscribe -> 200 and sub removed from /auth/me. OS-level notification delivery cannot be asserted in headless Chromium (brief-approved). Skill: ai-testing-core (Web Push is not an LLM/audio/image feature — no specialist skill applies)."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/heatshield_backend_test.py",
+    "/app/backend/tests/test_locations_and_push.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/pytest/pytest_locations_push.xml"
+  ],
+  "action_items": [
+    "(security, minor) Strip push_subscriptions from /api/auth/me response — auth secret in each subscription is meant to stay server-side.",
+    "(consistency, minor) Return 404 from DELETE /api/locations/{unknown_id} instead of silent 200.",
+    "(iteration 1 leftover, unchanged) Google Maps API key still needs preview origin whitelisted (RefererNotAllowedMapError) — not retested per brief."
+  ],
+  "critical_code_review_comments": [
+    "server.py /api/locations POST dedupes by label via $pull then $push — correct for Home/Work idempotence. Custom labels can still duplicate (by design).",
+    "push_service.send_push swallows non-410/404 WebPushException as 'sent=True' — this means /api/push/test can return 200 even when the transport actually failed (e.g., fake endpoint returns 401). Consider surfacing the actual delivery outcome for better observability, or narrow the 'kept' bucket to actual success.",
+    "push_service.monitor_loop resets last_notified_band only when the current band is BELOW threshold AND the previously notified band was AT/ABOVE threshold. The 'else' branch (still below threshold, first time) never touches state — correct. Good.",
+    "SavedPlaces.isActive uses lat/lng float compare with 1e-4 tolerance (~10m). Fine for identifying an active saved place vs 'current location'.",
+    "AppContext.detectLocation is called on every mount and overwrites persisted saved-place selection with 'Current location' if the browser returns a GPS fix. This means: user taps 'Use Home' → picks Home → reloads page → detectLocation() runs → header flips back to 'Current location'. Minor UX bug: consider not auto-detecting if a specific saved-place label is already active in localStorage, or gate detectLocation on first ever visit.",
+    "sw.js requireInteraction=true keeps heat alerts visible until dismissed — good for heat safety UX. tag='heatshield'/'heat-alert' collapses repeats — good.",
+    "Frontend push.js gracefully returns null when service worker registration fails — good.",
+    "MongoDB _id remains correctly excluded from all authenticated payloads via _public_user."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_locations_and_push.py (new — 11 tests for saved locations & web push)"
+  ],
+  "success_rate": {
+    "backend": "100% (35/35 pytest cases: 24 regression + 11 new)",
+    "frontend": "100% of testable flows (Saved Places quick-add Home & Work, Use → header switch, Delete; NotificationSettings threshold change persisted, test-btn disabled when not subscribed). 1 flow environment-blocked (real push subscription in headless Chromium — brief-approved)."
+  },
+  "test_credentials": "Admin: admin@heatshield.sg / admin123 (onboarded). Ephemeral users via /api/auth/register for CRUD tests.",
+  "seed_data_creation": "Test cleanup added: the frontend flow first DELETEs any existing admin saved_locations before exercising quick-save. Pytest uses unique uuid-prefixed emails per new_user_client fixture.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "New endpoints /api/locations (GET/POST/DELETE) and /api/push/* (vapid-public-key, subscribe, unsubscribe, threshold, test) are all covered by /app/backend/tests/test_locations_and_push.py. Frontend components SavedPlaces + NotificationSettings work as spec'd on mobile viewport. Do NOT expect the enable-push toggle to actually subscribe in headless browsers — that's an environment limit, not a bug. Real device testing (iOS Safari PWA / Android Chrome) needed to fully validate OS-level push delivery + monitor_loop background alerts.",
+  "rca_of_headless_push": "Root cause: Chromium in headless Playwright has no push messaging server, so PushManager.subscribe() rejects even after Notification.requestPermission() resolves 'granted'. The catch block in enablePush() throws to toggle handler which shows a toast and leaves state.subscribed=false. No code change required. Reproduction: log in, tap 'Enable heat alerts' switch in automated Chromium — toggle stays off; on real Chrome desktop / Android Chrome / iOS Safari (PWA installed) the subscription succeeds and POST /api/push/subscribe fires."
+}
