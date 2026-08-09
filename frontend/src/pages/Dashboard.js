@@ -43,17 +43,33 @@ export default function Dashboard() {
   const load = async () => {
     // Keep previous snapshot visible on refresh — only skeleton on first load
     if (!risk) setLoading(true);
+    const q = `lat=${location.lat}&lng=${location.lng}`;
     try {
       const [r, f, c] = await Promise.all([
-        api.get(`/risk?lat=${location.lat}&lng=${location.lng}`),
-        api.get(`/forecast?lat=${location.lat}&lng=${location.lng}`),
-        api.get(`/cooling/spots?lat=${location.lat}&lng=${location.lng}&limit=1`),
+        api.get(`/risk?${q}`, { timeout: 60000 }),
+        api.get(`/forecast?${q}`, { timeout: 60000 }),
+        api.get(`/cooling/spots?${q}&limit=1`, { timeout: 60000 }),
       ]);
       setRisk(r.data);
       setForecast(f.data);
       setNearest(c.data.spots[0]);
     } catch (e) {
-      toast.error("Could not load conditions");
+      // Fallback: public weather still loads if auth/risk fails
+      try {
+        const [cond, f, c] = await Promise.all([
+          api.get(`/conditions?${q}`, { timeout: 60000 }),
+          api.get(`/forecast?${q}`, { timeout: 60000 }),
+          api.get(`/cooling/spots?${q}&limit=1`, { timeout: 60000 }),
+        ]);
+        setRisk({
+          conditions: cond.data,
+          risk: { score: "—", band: "—", color: cond.data?.heat_level || "low", factors: [] },
+        });
+        setForecast(f.data);
+        setNearest(c.data.spots?.[0]);
+      } catch (e2) {
+        toast.error("Could not load conditions — check your connection and try refresh");
+      }
     } finally {
       setLoading(false);
     }
