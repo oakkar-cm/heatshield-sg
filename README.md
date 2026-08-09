@@ -47,6 +47,17 @@ uvicorn server:app --host 127.0.0.1 --port 8001
 
 API: `http://127.0.0.1:8001`
 
+### Deploy backend on Render
+
+| Setting | Value |
+|---------|--------|
+| Root Directory | `backend` |
+| Runtime | Python 3 (`runtime.txt` pins 3.12) |
+| Build Command | `pip install -r requirements.txt` |
+| Start Command | `uvicorn server:app --host 0.0.0.0 --port $PORT` |
+
+Set env vars from `backend/.env.example` (use MongoDB Atlas for `MONGO_URL`).
+
 ### 2. Frontend
 
 ```bash
