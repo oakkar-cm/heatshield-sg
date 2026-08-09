@@ -401,5 +401,7 @@ app.add_middleware(
 async def startup():
     store.init()
     await auth.seed_admin()
-    asyncio.create_task(push.monitor_loop(nea.get_conditions, nea.compute_risk))
+    # Background monitor needs a long-lived process (skip on Vercel serverless)
+    if not os.environ.get("VERCEL"):
+        asyncio.create_task(push.monitor_loop(nea.get_conditions, nea.compute_risk))
     logger.info("HeatShield SG API ready (SQLite)")

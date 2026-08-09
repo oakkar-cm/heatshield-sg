@@ -13,20 +13,33 @@ _lock = threading.Lock()
 _db_path: str | None = None
 
 
-def _default_path() -> str:
+def _pick_path(preferred: str | None = None) -> str:
+    candidates = []
+    if preferred:
+        candidates.append(preferred)
     if os.environ.get("SQLITE_PATH"):
-        return os.environ["SQLITE_PATH"]
-    # Vercel / serverless: writable temp only
-    if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
-        return "/tmp/heatshield.db"
-    return str(Path(__file__).parent / "data" / "heatshield.db")
+        candidates.append(os.environ["SQLITE_PATH"])
+    # Prefer writable temp on serverless / Linux hosts
+    candidates.append("/tmp/heatshield.db")
+    candidates.append(str(Path(__file__).parent / "data" / "heatshield.db"))
+    for p in candidates:
+        try:
+            parent = Path(p).parent
+            parent.mkdir(parents=True, exist_ok=True)
+            probe = parent / ".write_probe"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            return p
+        except Exception:
+            continue
+    return "/tmp/heatshield.db"
 
 
 def init(path: str | None = None) -> None:
     global _db_path
-    _db_path = path or _default_path()
+    _db_path = _pick_path(path)
     Path(_db_path).parent.mkdir(parents=True, exist_ok=True)
-    with _connect() as conn:
+    with sqlite3.connect(_db_path, check_same_thread=False) as conn:
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -48,6 +61,7 @@ def init(path: str | None = None) -> None:
             );
             """
         )
+        conn.commit()
 
 
 def _connect() -> sqlite3.Connection:
