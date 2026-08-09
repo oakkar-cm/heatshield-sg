@@ -2,17 +2,27 @@
 
 Singapore climate-resilience PWA for live heat awareness, cool-spot routing, AI advice, and emergency SOS.
 
+**Live app:** [https://heatshieldsg.vercel.app](https://heatshieldsg.vercel.app)  
+**API:** [https://heatshieldsg-api.vercel.app](https://heatshieldsg-api.vercel.app)  
 **Repo:** [github.com/oakkar-cm/heatshield-sg](https://github.com/oakkar-cm/heatshield-sg)
+
+### Demo login
+
+| | |
+|--|--|
+| Email | `admin@heatshield.sg` |
+| Password | `admin123` |
 
 ## Features
 
 - **Live weather** — NEA heat-stress stations + Open-Meteo location temperature, feels-like, humidity, and hourly forecast
-- **Personal heat risk** — score based on live conditions and your profile (age, health, outdoor exposure)
-- **Map** — heat stations, rainfall, and real Singapore cool spots
+- **Personal heat risk** — score from live conditions and your profile (age, health flags, outdoor exposure)
+- **Onboarding** — user type + optional health conditions (Skip supported)
+- **Map** — live NEA heat stations (colour = stress level), cool spots, rainfall gauges overlay
 - **Cooling routes** — nearest malls, parks, libraries, community clubs with Google Maps walking directions
-- **Ask AI** — Groq-powered chat grounded in live conditions
+- **Ask AI** — ChatGPT-style UI with word-by-word replies; Groq grounded in live Singapore conditions
 - **SOS** — logs the event, pushes to your devices, one-tap Call / SMS to caregivers with your location
-- **PWA** — Add to Home Screen; Web Push heat alerts (best over HTTPS; iOS needs Home Screen install)
+- **PWA + push** — Add to Home Screen; Web Push heat alerts (iOS needs Home Screen install)
 
 ## Stack
 
@@ -20,11 +30,28 @@ Singapore climate-resilience PWA for live heat awareness, cool-spot routing, AI 
 |-------|------|
 | Frontend | React (CRA/craco), Tailwind, Google Maps |
 | Backend | FastAPI, SQLite, JWT auth |
+| Hosting | Vercel (frontend + serverless API) |
 | Weather | NEA data.gov.sg, Open-Meteo |
 | AI | Groq (`llama-3.1-8b-instant`) |
 | Push | Web Push (VAPID) |
 
-## Quick start
+## Architecture (production)
+
+```
+Browser  →  https://heatshieldsg.vercel.app
+              │
+              ├─ static React PWA
+              └─ /api/*  (Vercel rewrite)
+                    │
+                    ▼
+              https://heatshieldsg-api.vercel.app  (FastAPI)
+```
+
+- Frontend proxies `/api` to the API so auth cookies stay same-origin.
+- SQLite on Vercel is per-instance (`/tmp`); JWT embeds profile / push subscription so auth and onboarding survive cold starts.
+- Background heat monitor is skipped on Vercel; a daily cron hits `/api/cron/heat-alerts`. Prefer **Test alert** / SOS for reliable push demos.
+
+## Quick start (local)
 
 ### Prerequisites
 
@@ -48,17 +75,6 @@ uvicorn server:app --host 127.0.0.1 --port 8001
 
 API: `http://127.0.0.1:8001`
 
-### Deploy backend on Render
-
-| Setting | Value |
-|---------|--------|
-| Root Directory | `backend` |
-| Runtime | Python 3 (`runtime.txt` pins 3.12) |
-| Build Command | `pip install -r requirements.txt` |
-| Start Command | `uvicorn server:app --host 0.0.0.0 --port $PORT` |
-
-Set env vars from `backend/.env.example`. No database addon required.
-
 ### 2. Frontend
 
 ```bash
@@ -72,7 +88,38 @@ npm start
 
 App: `http://localhost:3000`
 
-On first run, register an account (or use the seeded admin from `ADMIN_EMAIL` / `ADMIN_PASSWORD` in `backend/.env` if you set them).
+## Deploy on Vercel
+
+### API project (`heatshieldsg-api`)
+
+| Setting | Value |
+|---------|--------|
+| Root Directory | `backend` |
+| Entry | `app.py` (exports FastAPI `app`) |
+
+Set env vars from `backend/.env.example` (at least `JWT_SECRET`, `FRONTEND_URL`, `CORS_ORIGINS`, `GROQ_API_KEY`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`).
+
+### Frontend project (`heatshieldsg`)
+
+| Setting | Value |
+|---------|--------|
+| Root Directory | `frontend` |
+| Build | `npm run build` (see `frontend/vercel.json`) |
+| Output | `build` |
+
+| Variable | Value |
+|----------|--------|
+| `REACT_APP_BACKEND_URL` | leave empty (use same-origin `/api` proxy) |
+| `REACT_APP_GOOGLE_MAPS_API_KEY` | Maps JavaScript API key |
+| `REACT_APP_VAPID_PUBLIC_KEY` | same as backend public key |
+
+In Google Cloud, allow HTTP referrer `https://heatshieldsg.vercel.app/*` for the Maps key.
+
+`frontend/vercel.json` rewrites `/api/:path*` → `https://heatshieldsg-api.vercel.app/api/:path*`.
+
+### Optional: Render (long-lived API)
+
+See `render.yaml` if you want a persistent process (better for continuous heat-alert monitoring than Vercel serverless).
 
 ## Environment
 
@@ -80,20 +127,21 @@ On first run, register an account (or use the seeded admin from `ADMIN_EMAIL` / 
 
 | Variable | Purpose |
 |----------|---------|
-| `SQLITE_PATH` | Optional SQLite file path (default `data/heatshield.db`) |
+| `SQLITE_PATH` | Optional SQLite path (default `data/heatshield.db`; Vercel uses `/tmp`) |
 | `JWT_SECRET` | Auth signing secret |
 | `CORS_ORIGINS` | Allowed frontends (comma-separated) |
-| `FRONTEND_URL` | Cookie / CORS frontend origin |
+| `FRONTEND_URL` | Cookie Secure flag + frontend origin (`https://heatshieldsg.vercel.app`) |
 | `GROQ_API_KEY` | Groq API key for AI |
 | `GROQ_MODEL` | e.g. `llama-3.1-8b-instant` |
 | `VAPID_*` | Web Push keys |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Optional seed admin on startup |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Seed admin on startup |
+| `CRON_SECRET` | Optional bearer for `/api/cron/heat-alerts` |
 
 ### Frontend (`frontend/.env`)
 
 | Variable | Purpose |
 |----------|---------|
-| `REACT_APP_BACKEND_URL` | Leave empty for local proxy; set for deployed API |
+| `REACT_APP_BACKEND_URL` | Empty for local proxy / Vercel rewrite; set only for a direct API URL |
 | `REACT_APP_GOOGLE_MAPS_API_KEY` | Google Maps JavaScript API key |
 | `REACT_APP_VAPID_PUBLIC_KEY` | Must match backend VAPID public key |
 
@@ -101,18 +149,32 @@ On first run, register an account (or use the seeded admin from `ADMIN_EMAIL` / 
 
 ## Mobile (Add to Home Screen)
 
-1. Serve the app over the network (same Wi‑Fi) or deploy with **HTTPS**.
-2. **iPhone (Safari):** Share → **Add to Home Screen**. Open from the icon; enable notifications for lock-screen heat alerts (iOS 16.4+).
-3. **Android (Chrome):** Use the in-app **Install app** card, or Chrome menu → Install / Add to Home screen.
+1. Use the live HTTPS app (or LAN + HTTPS).
+2. **iPhone (Safari):** Share → **Add to Home Screen**. Open from the icon; enable notifications for lock-screen alerts (iOS 16.4+).
+3. **Android (Chrome):** in-app **Install app** card, or Chrome menu → Install / Add to Home screen.
 
-Push alerts need a subscribed browser and (on iOS) the installed Home Screen app.
+Push needs notification permission. On iPhone, only the installed Home Screen app can receive Web Push.
+
+## Map legend
+
+| Colour | Meaning |
+|--------|---------|
+| Green / amber / red pins | Live NEA heat-stress stations (Low → Very High) |
+| Blue pins | Cool spots (malls, parks, libraries, CCs) |
+| Cyan / blue (rainfall toggle) | NEA rain gauges — cyan = 0 mm, blue = raining |
+
+If **Show rainfall** looks unchanged, Singapore may simply have **0 mm** at all gauges; the status line under the button reports that.
 
 ## Project layout
 
 ```
 heatshield-sg/
 ├── backend/          # FastAPI API, NEA/Open-Meteo, AI, push, auth
+│   ├── app.py        # Vercel entry
+│   ├── server.py
+│   └── vercel.json   # daily heat-alert cron
 ├── frontend/         # React PWA
+│   └── vercel.json   # /api proxy + SPA rewrites
 ├── memory/           # Product notes
 └── README.md
 ```
@@ -124,15 +186,20 @@ heatshield-sg/
 | `GET /api/conditions` | Live conditions for lat/lng |
 | `GET /api/risk` | Personalised risk (auth) |
 | `GET /api/forecast` | Live hourly feels-like forecast |
+| `GET /api/map/wbgt` | Heat-stress stations |
+| `GET /api/map/rainfall` | Rain gauges |
 | `GET /api/cooling/spots` | Nearest cool spots |
-| `POST /api/chat` | Streaming AI advice (auth) |
+| `POST /api/chat` | AI advice JSON `{ reply }` (auth) |
 | `POST /api/emergency/sos` | SOS log + push + caregiver links |
+| `POST /api/push/test` | Send a test notification (auth) |
+| `GET /api/cron/heat-alerts` | Cron tick for heat alerts |
 
 ## Notes
 
-- Weather text stays simple (temperature, feels like, heat stress) — no technical jargon in the UI.
-- Cool spots are curated real Singapore venues; routes open real Google Maps walking directions.
-- SOS does not auto-SMS caregivers without your tap (Call / SMS links); it does push to your own devices when subscribed.
+- Weather copy stays simple (temperature, feels like, heat stress) — no WBGT jargon in the UI.
+- Cool spots are curated real Singapore venues; routes open Google Maps walking directions.
+- SOS does not auto-SMS caregivers without your tap (Call / SMS links); it can push to your own devices when subscribed.
+- Design-sprint IT prototype: SQLite + JWT; not a full production multi-region database.
 
 ## License
 
