@@ -25,7 +25,15 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def create_access_token(user: dict) -> str:
-    """Embed profile in the token so auth works across serverless instances (no shared DB)."""
+    """Embed profile (+ latest push sub) so auth/push work across serverless instances."""
+    # Keep one subscription in the JWT so /push/test still works when SQLite /tmp is empty.
+    subs = user.get("push_subscriptions") or []
+    latest_sub = None
+    if isinstance(subs, list) and subs:
+        latest_sub = subs[-1] if isinstance(subs[-1], dict) else None
+    elif isinstance(user.get("push_subscription"), dict):
+        latest_sub = user["push_subscription"]
+
     payload = {
         "sub": str(user.get("id") or user.get("_id")),
         "email": user.get("email"),
@@ -34,9 +42,17 @@ def create_access_token(user: dict) -> str:
         "user_type": user.get("user_type", "citizen"),
         "profile": user.get("profile") or {"age_group": "adult", "health_flags": [], "outdoor_exposure": "low"},
         "onboarded": bool(user.get("onboarded", False)),
+        "notify_threshold": user.get("notify_threshold") or "High",
+        "quiet_hours": user.get("quiet_hours") or {"enabled": False, "start": 22, "end": 7},
         "exp": datetime.now(timezone.utc) + timedelta(hours=12),
         "type": "access",
     }
+    if latest_sub and latest_sub.get("endpoint") and latest_sub.get("keys"):
+        payload["push_subscription"] = {
+            "endpoint": latest_sub["endpoint"],
+            "keys": latest_sub["keys"],
+            "expirationTime": latest_sub.get("expirationTime"),
+        }
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
@@ -78,7 +94,9 @@ class LoginInput(BaseModel):
     password: str
 
 
-def _public_user(user: dict) -> dict:
+def _public_user(user: dict | None) -> dict:
+    if not user:
+        raise HTTPException(status_code=500, detail="User record missing")
     user = dict(user)
     user["id"] = str(user.get("id") or user.get("_id"))
     user.pop("_id", None)
@@ -88,6 +106,7 @@ def _public_user(user: dict) -> dict:
 
 
 def _user_from_token(payload: dict) -> dict:
+    sub = payload.get("push_subscription")
     return {
         "id": payload["sub"],
         "email": payload.get("email"),
@@ -96,12 +115,15 @@ def _user_from_token(payload: dict) -> dict:
         "user_type": payload.get("user_type", "citizen"),
         "profile": payload.get("profile") or {"age_group": "adult", "health_flags": [], "outdoor_exposure": "low"},
         "onboarded": bool(payload.get("onboarded", False)),
+        "notify_threshold": payload.get("notify_threshold") or "High",
+        "quiet_hours": payload.get("quiet_hours") or {"enabled": False, "start": 22, "end": 7},
         "emergency_contacts": [],
         "saved_locations": [],
+        "push_subscriptions": [sub] if isinstance(sub, dict) and sub.get("endpoint") else [],
     }
 
 
-async def get_current_user(request: Request) -> dict:
+def _read_access_payload(request: Request) -> dict:
     token = request.cookies.get("access_token")
     if not token:
         auth_header = request.headers.get("Authorization", "")
@@ -113,15 +135,42 @@ async def get_current_user(request: Request) -> dict:
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         if payload.get("type") != "access":
             raise HTTPException(status_code=401, detail="Invalid token type")
-        user = store.get_user_by_id(payload["sub"])
-        if user:
-            return _public_user(user)
-        # Serverless: SQLite is per-instance — fall back to claims in the JWT
-        return _user_from_token(payload)
+        return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+
+async def get_current_user(request: Request) -> dict:
+    payload = _read_access_payload(request)
+    user = store.get_user_by_id(payload["sub"])
+    if user:
+        return _public_user(user)
+    # Serverless: SQLite is per-instance — fall back to claims in the JWT
+    return _public_user(_user_from_token(payload))
+
+
+def get_user_with_push(request: Request, user: dict) -> dict:
+    """Full user record including push subscriptions (DB, then JWT claim fallback)."""
+    full = store.get_user_by_id(user["id"])
+    jwt_subs = []
+    try:
+        payload = _read_access_payload(request)
+        sub = payload.get("push_subscription")
+        if isinstance(sub, dict) and sub.get("endpoint") and sub.get("keys"):
+            jwt_subs = [sub]
+    except HTTPException:
+        pass
+    if full:
+        out = dict(full)
+        if not (out.get("push_subscriptions") or []) and jwt_subs:
+            out["push_subscriptions"] = jwt_subs
+        return out
+    return {
+        **user,
+        "push_subscriptions": jwt_subs,
+    }
 
 
 async def _check_lockout(identifier: str):
@@ -146,18 +195,24 @@ async def register(data: RegisterInput, response: Response):
     email = data.email.lower()
     if store.get_user_by_email(email):
         raise HTTPException(status_code=400, detail="Email already registered")
-    doc = store.create_user({
-        "email": email,
-        "password_hash": hash_password(data.password),
-        "name": data.name,
-        "role": "user",
-        "user_type": data.user_type,
-        "profile": {"age_group": "adult", "health_flags": [], "outdoor_exposure": "low"},
-        "onboarded": False,
-        "emergency_contacts": [],
-        "saved_locations": [],
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
+    try:
+        doc = store.create_user({
+            "email": email,
+            "password_hash": hash_password(data.password),
+            "name": data.name,
+            "role": "user",
+            "user_type": data.user_type,
+            "profile": {"age_group": "adult", "health_flags": [], "outdoor_exposure": "low"},
+            "onboarded": False,
+            "emergency_contacts": [],
+            "saved_locations": [],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception as exc:
+        # Concurrent register with same email (unique constraint)
+        if store.get_user_by_email(email):
+            raise HTTPException(status_code=400, detail="Email already registered") from exc
+        raise
     set_auth_cookies(response, create_access_token(doc), create_refresh_token(doc["id"]))
     return _public_user(doc)
 

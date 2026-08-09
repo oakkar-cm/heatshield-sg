@@ -29,7 +29,7 @@ Singapore climate-resilience PWA for live heat awareness, cool-spot routing, AI 
 | Layer | Tech |
 |-------|------|
 | Frontend | React (CRA/craco), Tailwind, Google Maps |
-| Backend | FastAPI, SQLite, JWT auth |
+| Backend | FastAPI, SQLite or Turso (shared), JWT auth |
 | Hosting | Vercel (frontend + serverless API) |
 | Weather | NEA data.gov.sg, Open-Meteo |
 | AI | Groq (`llama-3.1-8b-instant`) |
@@ -48,8 +48,27 @@ Browser  →  https://heatshieldsg.vercel.app
 ```
 
 - Frontend proxies `/api` to the API so auth cookies stay same-origin.
-- SQLite on Vercel is per-instance (`/tmp`); JWT embeds profile / push subscription so auth and onboarding survive cold starts.
+- **Multi-user (production):** set `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` on the API project so all Vercel instances share one database. Without Turso, each serverless instance has its own empty `/tmp` SQLite and users/chat/push will not stay in sync.
+- JWT still embeds profile / push subscription as a fallback for cold starts.
 - Background heat monitor is skipped on Vercel; a daily cron hits `/api/cron/heat-alerts`. Prefer **Test alert** / SOS for reliable push demos.
+- Check `GET /api/health` → `{ "backend": "turso", "multi_user_safe": true }` when shared DB is wired.
+
+### Multi-user DB setup (Turso — free)
+
+Required for many people using the live app at once:
+
+1. Create a free DB at [turso.tech](https://turso.tech) (or `turso db create heatshield-sg`).
+2. Copy the DB URL (`libsql://…`) and an auth token.
+3. Add to the **heatshieldsg-api** Vercel project (Production):
+
+| Variable | Value |
+|----------|--------|
+| `TURSO_DATABASE_URL` | `libsql://…` |
+| `TURSO_AUTH_TOKEN` | token from Turso |
+
+4. Redeploy the API. Confirm `https://heatshieldsg-api.vercel.app/api/health` shows `"backend":"turso"`.
+
+Locally, leave Turso unset to use `backend/data/heatshield.db` (WAL mode, safe for concurrent local requests).
 
 ## Quick start (local)
 
@@ -127,7 +146,9 @@ See `render.yaml` if you want a persistent process (better for continuous heat-a
 
 | Variable | Purpose |
 |----------|---------|
-| `SQLITE_PATH` | Optional SQLite path (default `data/heatshield.db`; Vercel uses `/tmp`) |
+| `SQLITE_PATH` | Local SQLite path (default `data/heatshield.db`; ignored when Turso is set) |
+| `TURSO_DATABASE_URL` | Shared libSQL URL for multi-user on Vercel |
+| `TURSO_AUTH_TOKEN` | Turso auth token |
 | `JWT_SECRET` | Auth signing secret |
 | `CORS_ORIGINS` | Allowed frontends (comma-separated) |
 | `FRONTEND_URL` | Cookie Secure flag + frontend origin (`https://heatshieldsg.vercel.app`) |

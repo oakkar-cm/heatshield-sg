@@ -7,10 +7,10 @@ import logging
 import asyncio
 from datetime import datetime, timezone
 from urllib.parse import quote
-from fastapi import FastAPI, APIRouter, Depends, HTTPException
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Response
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 import auth
 import store
@@ -69,6 +69,10 @@ class PushSubscribeInput(BaseModel):
     subscription: dict
 
 
+class PushTestInput(BaseModel):
+    subscription: Optional[Dict[str, Any]] = None
+
+
 class NotifyThresholdInput(BaseModel):
     threshold: str
 
@@ -81,7 +85,19 @@ class QuietHoursInput(BaseModel):
 
 @api.get("/")
 async def root():
-    return {"message": "HeatShield SG API", "status": "ok", "storage": "sqlite"}
+    status = store.db_status()
+    return {
+        "message": "HeatShield SG API",
+        "status": "ok",
+        "storage": status.get("backend"),
+        "multi_user_safe": status.get("multi_user_safe"),
+    }
+
+
+@api.get("/health")
+async def health():
+    status = store.db_status()
+    return {"ok": True, **status}
 
 
 @api.get("/conditions")
@@ -167,7 +183,7 @@ async def delete_contact(contact_id: str, user: dict = Depends(auth.get_current_
 
 
 @api.post("/emergency/sos")
-async def sos(data: SosInput, user: dict = Depends(auth.get_current_user)):
+async def sos(data: SosInput, request: Request, user: dict = Depends(auth.get_current_user)):
     full = store.get_user_by_id(user["id"]) or {}
     contacts = full.get("emergency_contacts", []) or []
     maps_link = None
@@ -190,7 +206,8 @@ async def sos(data: SosInput, user: dict = Depends(auth.get_current_user)):
 
     push_sent = 0
     try:
-        push_sent = await push.push_to_user(full, {
+        push_user = auth.get_user_with_push(request, user)
+        push_sent = await push.push_to_user(push_user, {
             "title": "SOS activated",
             "body": f"{name} triggered SOS" + (f". Location: {maps_link}" if maps_link else ""),
             "url": "/emergency",
@@ -232,7 +249,13 @@ async def sos(data: SosInput, user: dict = Depends(auth.get_current_user)):
 
 
 @api.put("/profile")
-async def update_profile(data: ProfileUpdate, user: dict = Depends(auth.get_current_user)):
+async def update_profile(
+    data: ProfileUpdate,
+    response: Response,
+    user: dict = Depends(auth.get_current_user),
+):
+    # Serverless SQLite may not have this user yet — create from JWT claims first.
+    row = store.ensure_user(user)
     updates = {}
     if data.user_type is not None:
         updates["user_type"] = data.user_type
@@ -244,7 +267,28 @@ async def update_profile(data: ProfileUpdate, user: dict = Depends(auth.get_curr
         updates["profile.health_flags"] = data.health_flags
     if data.outdoor_exposure is not None:
         updates["profile.outdoor_exposure"] = data.outdoor_exposure
-    doc = store.update_user(user["id"], set_fields=updates) if updates else store.get_user_by_id(user["id"])
+
+    doc = store.update_user(row["id"], set_fields=updates) if updates else row
+    if not doc:
+        # Last-resort merge so onboarding never hard-fails on a cold instance
+        doc = dict(row)
+        if data.user_type is not None:
+            doc["user_type"] = data.user_type
+        if data.onboarded is not None:
+            doc["onboarded"] = data.onboarded
+        profile = dict(doc.get("profile") or {})
+        if data.age_group is not None:
+            profile["age_group"] = data.age_group
+        if data.health_flags is not None:
+            profile["health_flags"] = data.health_flags
+        if data.outdoor_exposure is not None:
+            profile["outdoor_exposure"] = data.outdoor_exposure
+        doc["profile"] = profile
+
+    # Persist onboarded/profile in JWT so /auth/me works across Vercel instances
+    access = auth.create_access_token(doc)
+    refresh = auth.create_refresh_token(str(doc.get("id") or row["id"]))
+    auth.set_auth_cookies(response, access, refresh)
     return auth._public_user(doc)
 
 
@@ -344,22 +388,40 @@ async def vapid_public_key():
 
 
 @api.post("/push/subscribe")
-async def push_subscribe(data: PushSubscribeInput, user: dict = Depends(auth.get_current_user)):
+async def push_subscribe(data: PushSubscribeInput, response: Response, user: dict = Depends(auth.get_current_user)):
+    if not data.subscription.get("endpoint") or not data.subscription.get("keys"):
+        raise HTTPException(status_code=400, detail="Invalid push subscription")
+    row = store.ensure_user(user)
     endpoint = data.subscription.get("endpoint")
-    store.update_user(user["id"], pull={"push_subscriptions": {"endpoint": endpoint}})
-    store.update_user(user["id"], push={"push_subscriptions": data.subscription})
+    store.update_user(row["id"], pull={"push_subscriptions": {"endpoint": endpoint}})
+    updated = store.update_user(row["id"], push={"push_subscriptions": data.subscription})
+    if not updated:
+        raise HTTPException(status_code=500, detail="Could not save push subscription")
+    # Re-issue JWT so the subscription survives Vercel SQLite cold starts
+    access = auth.create_access_token(updated)
+    refresh = auth.create_refresh_token(updated["id"])
+    auth.set_auth_cookies(response, access, refresh)
     return {"ok": True}
 
 
 @api.post("/push/unsubscribe")
-async def push_unsubscribe(data: PushSubscribeInput, user: dict = Depends(auth.get_current_user)):
+async def push_unsubscribe(data: PushSubscribeInput, response: Response, user: dict = Depends(auth.get_current_user)):
     endpoint = data.subscription.get("endpoint")
-    store.update_user(user["id"], pull={"push_subscriptions": {"endpoint": endpoint}})
+    store.ensure_user(user)
+    updated = store.update_user(user["id"], pull={"push_subscriptions": {"endpoint": endpoint}}) or store.get_user_by_id(user["id"])
+    if updated:
+        updated["push_subscriptions"] = [
+            s for s in (updated.get("push_subscriptions") or []) if s.get("endpoint") != endpoint
+        ]
+        access = auth.create_access_token(updated)
+        refresh = auth.create_refresh_token(updated["id"])
+        auth.set_auth_cookies(response, access, refresh)
     return {"ok": True}
 
 
 @api.put("/push/threshold")
 async def set_threshold(data: NotifyThresholdInput, user: dict = Depends(auth.get_current_user)):
+    store.ensure_user(user)
     store.update_user(user["id"], set_fields={"notify_threshold": data.threshold})
     return {"ok": True, "threshold": data.threshold}
 
@@ -367,23 +429,61 @@ async def set_threshold(data: NotifyThresholdInput, user: dict = Depends(auth.ge
 @api.put("/push/quiet-hours")
 async def set_quiet_hours(data: QuietHoursInput, user: dict = Depends(auth.get_current_user)):
     qh = {"enabled": data.enabled, "start": data.start % 24, "end": data.end % 24}
+    store.ensure_user(user)
     store.update_user(user["id"], set_fields={"quiet_hours": qh})
     return {"ok": True, "quiet_hours": qh}
 
 
 @api.post("/push/test")
-async def push_test(user: dict = Depends(auth.get_current_user)):
-    full = store.get_user_by_id(user["id"])
+async def push_test(
+    request: Request,
+    response: Response,
+    data: PushTestInput = PushTestInput(),
+    user: dict = Depends(auth.get_current_user),
+):
+    if not os.environ.get("VAPID_PRIVATE_KEY"):
+        raise HTTPException(status_code=503, detail="Push is not configured on the server (missing VAPID keys).")
+
+    row = store.ensure_user(user)
+    if data.subscription and data.subscription.get("endpoint"):
+        endpoint = data.subscription.get("endpoint")
+        store.update_user(row["id"], pull={"push_subscriptions": {"endpoint": endpoint}})
+        row = store.update_user(row["id"], push={"push_subscriptions": data.subscription}) or row
+        access = auth.create_access_token(row)
+        refresh = auth.create_refresh_token(row["id"])
+        auth.set_auth_cookies(response, access, refresh)
+
+    push_user = auth.get_user_with_push(request, user)
+    if data.subscription and data.subscription.get("endpoint"):
+        push_user["push_subscriptions"] = [data.subscription]
+
     payload = {
         "title": "HeatShield SG test alert",
         "body": "Notifications are on. You'll be alerted here even with the app closed.",
         "url": "/",
         "tag": "heat-test",
     }
-    sent = await push.push_to_user(full, payload)
+    sent = await push.push_to_user(push_user, payload)
     if sent == 0:
-        raise HTTPException(status_code=400, detail="No active push subscription. Enable notifications first.")
+        raise HTTPException(
+            status_code=400,
+            detail="Could not deliver push. Re-enable notifications, then try again.",
+        )
     return {"ok": True, "sent": sent}
+
+
+@api.get("/cron/heat-alerts")
+async def cron_heat_alerts(request: Request):
+    """Vercel Cron entrypoint — runs one heat-alert pass."""
+    secret = os.environ.get("CRON_SECRET", "")
+    auth_header = request.headers.get("Authorization", "")
+    is_vercel_cron = request.headers.get("x-vercel-cron") == "1"
+    if secret and auth_header != f"Bearer {secret}" and not is_vercel_cron:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if not secret and os.environ.get("VERCEL") and not is_vercel_cron:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    result = await push.run_heat_alert_tick(nea.get_conditions, nea.compute_risk)
+    return {"ok": True, **result}
 
 
 app.include_router(auth.auth_router)
