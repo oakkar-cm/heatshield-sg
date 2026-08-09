@@ -14,7 +14,12 @@ _db_path: str | None = None
 
 
 def _default_path() -> str:
-    return os.environ.get("SQLITE_PATH") or str(Path(__file__).parent / "data" / "heatshield.db")
+    if os.environ.get("SQLITE_PATH"):
+        return os.environ["SQLITE_PATH"]
+    # Vercel / serverless: writable temp only
+    if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+        return "/tmp/heatshield.db"
+    return str(Path(__file__).parent / "data" / "heatshield.db")
 
 
 def init(path: str | None = None) -> None:
