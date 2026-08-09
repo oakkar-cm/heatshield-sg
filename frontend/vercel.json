@@ -2,5 +2,14 @@
   "installCommand": "npm install --legacy-peer-deps",
   "buildCommand": "npm run build",
   "outputDirectory": "build",
-  "rewrites": [{ "source": "/((?!static/).*)", "destination": "/index.html" }]
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://heatshieldsg-api.vercel.app/api/:path*"
+    },
+    {
+      "source": "/((?!static/).*)",
+      "destination": "/index.html"
+    }
+  ]
 }

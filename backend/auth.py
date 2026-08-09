@@ -35,12 +35,13 @@ def create_refresh_token(user_id: str) -> str:
 
 
 def _cookie_flags() -> dict:
+    # Frontend proxies /api on the same domain, so Lax first-party cookies work in the browser.
     frontend = os.environ.get("FRONTEND_URL", "")
     secure = frontend.startswith("https://")
     return {
         "httponly": True,
         "secure": secure,
-        "samesite": "none" if secure else "lax",
+        "samesite": "lax",
         "path": "/",
     }
 
