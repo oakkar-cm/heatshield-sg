@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { API } from "../lib/api";
 import api from "../lib/api";
 import { useApp } from "../context/AppContext";
 import { Button } from "../components/ui/button";
@@ -55,30 +54,23 @@ export default function ChatPage() {
     setMessages((m) => [...m, { role: "user", content: msg }, { role: "assistant", content: "" }]);
     setStreaming(true);
     try {
-      const resp = await fetch(`${API}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ message: msg, session_id: "default", lat: location.lat, lng: location.lng }),
-      });
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let acc = "";
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        acc += decoder.decode(value, { stream: true });
-        setMessages((m) => {
-          const copy = [...m];
-          copy[copy.length - 1] = { role: "assistant", content: acc };
-          return copy;
-        });
-      }
-    } catch (e) {
+      const { data } = await api.post(
+        "/chat",
+        { message: msg, session_id: "default", lat: location.lat, lng: location.lng },
+        { timeout: 90000 }
+      );
+      const reply = data?.reply || data?.message || "I couldn't form a reply. Please try again.";
       setMessages((m) => {
         const copy = [...m];
-        copy[copy.length - 1] = { role: "assistant", content: "Sorry, I couldn't respond just now. Please try again." };
+        copy[copy.length - 1] = { role: "assistant", content: reply };
+        return copy;
+      });
+    } catch (e) {
+      const detail = e?.response?.data?.detail;
+      const errText = typeof detail === "string" ? detail : "Sorry, I couldn't respond just now. Please try again.";
+      setMessages((m) => {
+        const copy = [...m];
+        copy[copy.length - 1] = { role: "assistant", content: errText };
         return copy;
       });
     } finally {

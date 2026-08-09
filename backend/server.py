@@ -8,7 +8,6 @@ import asyncio
 from datetime import datetime, timezone
 from urllib.parse import quote
 from fastapi import FastAPI, APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -266,6 +265,7 @@ async def recommendations(lat: float = SG_LAT, lng: float = SG_LNG, user: dict =
 
 @api.post("/chat")
 async def chat(data: ChatInput, user: dict = Depends(auth.get_current_user)):
+    """Return full reply as JSON — more reliable than streaming through Vercel proxies."""
     profile = {"user_type": user.get("user_type"), "profile": user.get("profile", {})}
     session_key = f"{user['id']}:{data.session_id}"
     history_doc = store.get_chat(session_key)
@@ -285,29 +285,31 @@ async def chat(data: ChatInput, user: dict = Depends(auth.get_current_user)):
     except Exception as exc:
         logger.warning("Live context fetch failed: %s", exc)
 
-    async def gen():
-        full = ""
-        async for chunk in ai.stream_chat(
-            session_key, data.message, profile, history, cond, risk, forecast, spots,
-        ):
-            full += chunk
-            yield chunk
-        new_history = history + [
-            {"role": "user", "content": data.message},
-            {"role": "assistant", "content": full},
-        ]
+    full = ""
+    async for chunk in ai.stream_chat(
+        session_key, data.message, profile, history, cond, risk, forecast, spots,
+    ):
+        full += chunk
+
+    new_history = history + [
+        {"role": "user", "content": data.message},
+        {"role": "assistant", "content": full},
+    ]
+    try:
         store.save_chat(session_key, {
             "session_key": session_key,
             "user_id": user["id"],
             "messages": new_history[-40:],
             "updated_at": datetime.now(timezone.utc).isoformat(),
         })
+    except Exception as exc:
+        logger.warning("chat history save failed: %s", exc)
 
-    headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-    if cond:
-        headers["X-HeatShield-Heat-Level"] = str(cond.get("heat_level", ""))
-        headers["X-HeatShield-Temp"] = str((cond.get("air_temperature") or {}).get("value", ""))
-    return StreamingResponse(gen(), media_type="text/plain", headers=headers)
+    return {
+        "reply": full,
+        "heat_level": (cond or {}).get("heat_level"),
+        "temp": ((cond or {}).get("air_temperature") or {}).get("value"),
+    }
 
 
 @api.get("/chat/history")
