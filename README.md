@@ -19,7 +19,7 @@ Singapore climate-resilience PWA for live heat awareness, cool-spot routing, AI 
 | Layer | Tech |
 |-------|------|
 | Frontend | React (CRA/craco), Tailwind, Google Maps |
-| Backend | FastAPI, Motor/MongoDB, JWT auth |
+| Backend | FastAPI, SQLite, JWT auth |
 | Weather | NEA data.gov.sg, Open-Meteo |
 | AI | Groq (`llama-3.1-8b-instant`) |
 | Push | Web Push (VAPID) |
@@ -30,7 +30,8 @@ Singapore climate-resilience PWA for live heat awareness, cool-spot routing, AI 
 
 - Node.js 18+
 - Python 3.11+
-- MongoDB running on `localhost:27017`
+
+No MongoDB. The API uses a local **SQLite** file (`backend/data/heatshield.db`).
 
 ### 1. Backend
 
@@ -56,7 +57,7 @@ API: `http://127.0.0.1:8001`
 | Build Command | `pip install -r requirements.txt` |
 | Start Command | `uvicorn server:app --host 0.0.0.0 --port $PORT` |
 
-Set env vars from `backend/.env.example` (use MongoDB Atlas for `MONGO_URL`).
+Set env vars from `backend/.env.example`. No database addon required.
 
 ### 2. Frontend
 
@@ -79,8 +80,7 @@ On first run, register an account (or use the seeded admin from `ADMIN_EMAIL` / 
 
 | Variable | Purpose |
 |----------|---------|
-| `MONGO_URL` | MongoDB connection string |
-| `DB_NAME` | Database name |
+| `SQLITE_PATH` | Optional SQLite file path (default `data/heatshield.db`) |
 | `JWT_SECRET` | Auth signing secret |
 | `CORS_ORIGINS` | Allowed frontends (comma-separated) |
 | `FRONTEND_URL` | Cookie / CORS frontend origin |

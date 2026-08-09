@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: heatshield-sg-api
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FRONTEND_URL
+        value: https://heatshieldsg.vercel.app
+      - key: CORS_ORIGINS
+        value: https://heatshieldsg.vercel.app,http://localhost:3000
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.1-8b-instant
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_CLAIMS_EMAIL
+        value: mailto:alerts@heatshield.sg
+      - key: ADMIN_EMAIL
+        value: admin@heatshield.sg
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: SQLITE_PATH
+        value: /opt/render/project/src/data/heatshield.db

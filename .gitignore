@@ -57,6 +57,11 @@ __pycache__/
 *pyc*
 venv/
 .venv/
+backend/data/
+*.db
+
+# Local deploy helpers
+.vercel
 
 # Development tools
 chainlit.md

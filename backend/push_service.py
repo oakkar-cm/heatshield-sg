@@ -5,7 +5,8 @@ import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from pywebpush import webpush, WebPushException
-from bson import ObjectId
+
+import store
 
 logger = logging.getLogger("heatshield.push")
 
@@ -20,7 +21,7 @@ def in_quiet_hours(qh: dict, hour: int) -> bool:
         return False
     if start < end:
         return start <= hour < end
-    return hour >= start or hour < end  # overnight wrap
+    return hour >= start or hour < end
 
 
 def _vapid_private():
@@ -32,7 +33,6 @@ def _claims_email():
 
 
 def send_push(subscription: dict, payload: dict) -> bool:
-    """Send a single web-push message. Returns False if subscription is stale (410/404)."""
     try:
         webpush(
             subscription_info=subscription,
@@ -46,14 +46,16 @@ def send_push(subscription: dict, payload: dict) -> bool:
         if status in (404, 410):
             return False
         logger.warning("web-push failed: %s", e)
-        return True  # keep sub; transient error
+        return True
     except Exception as e:
         logger.warning("web-push error: %s", e)
         return True
 
 
-async def push_to_user(db, user: dict, payload: dict):
-    subs = user.get("push_subscriptions", []) or []
+async def push_to_user(user: dict, payload: dict):
+    uid = user.get("id") or user.get("_id")
+    full = store.get_user_by_id(str(uid)) if uid else None
+    subs = (full or user).get("push_subscriptions", []) or []
     if not subs:
         return 0
     sent = 0
@@ -65,22 +67,17 @@ async def push_to_user(db, user: dict, payload: dict):
             sent += 1
         else:
             stale.append(sub.get("endpoint"))
-    if stale:
-        await db.users.update_one(
-            {"_id": ObjectId(user["id"] if "id" in user else user["_id"])},
-            {"$pull": {"push_subscriptions": {"endpoint": {"$in": stale}}}},
-        )
+    if stale and uid:
+        store.pull_push_endpoints(str(uid), [e for e in stale if e])
     return sent
 
 
-async def monitor_loop(db, get_conditions, compute_risk, interval=600):
-    """Periodically evaluate each subscribed user's heat risk and push when the band rises."""
+async def monitor_loop(get_conditions, compute_risk, interval=600):
     await asyncio.sleep(20)
     while True:
         try:
-            cursor = db.users.find({"push_subscriptions": {"$exists": True, "$ne": []}})
             sg_hour = datetime.now(timezone(timedelta(hours=8))).hour
-            async for user in cursor:
+            for user in store.list_users_with_push():
                 try:
                     if in_quiet_hours(user.get("quiet_hours"), sg_hour):
                         continue
@@ -92,9 +89,8 @@ async def monitor_loop(db, get_conditions, compute_risk, interval=600):
                     risk = compute_risk(cond, user.get("profile", {}))
                     threshold = user.get("notify_threshold", "High")
                     if BAND_RANK.get(risk["band"], 0) < BAND_RANK.get(threshold, 2):
-                        # reset so a future rise re-notifies
                         if user.get("last_notified_band") and BAND_RANK.get(user["last_notified_band"], 0) >= BAND_RANK.get(threshold, 2):
-                            await db.users.update_one({"_id": user["_id"]}, {"$set": {"last_notified_band": risk["band"]}})
+                            store.update_user(user["id"], set_fields={"last_notified_band": risk["band"]})
                         continue
                     if user.get("last_notified_band") == risk["band"]:
                         continue
@@ -104,9 +100,8 @@ async def monitor_loop(db, get_conditions, compute_risk, interval=600):
                         "url": "/",
                         "tag": "heat-alert",
                     }
-                    u = {**user, "id": str(user["_id"])}
-                    await push_to_user(db, u, payload)
-                    await db.users.update_one({"_id": user["_id"]}, {"$set": {"last_notified_band": risk["band"]}})
+                    await push_to_user(user, payload)
+                    store.update_user(user["id"], set_fields={"last_notified_band": risk["band"]})
                 except Exception as e:
                     logger.warning("monitor user error: %s", e)
         except Exception as e:

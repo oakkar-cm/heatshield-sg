@@ -1,22 +1,15 @@
-"""JWT email/password authentication for FastAPI + MongoDB."""
+"""JWT email/password authentication (SQLite-backed)."""
 import os
 import jwt
 import bcrypt
-import secrets
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Request, Response, HTTPException, Depends
 from pydantic import BaseModel, EmailStr, Field
-from bson import ObjectId
+
+import store
 
 JWT_ALGORITHM = "HS256"
 auth_router = APIRouter(prefix="/api/auth", tags=["auth"])
-
-_db = None
-
-
-def init_auth(db):
-    global _db
-    _db = db
 
 
 def get_jwt_secret() -> str:
@@ -42,7 +35,6 @@ def create_refresh_token(user_id: str) -> str:
 
 
 def _cookie_flags() -> dict:
-    """Use Secure+SameSite=None only on HTTPS; localhost HTTP needs Lax/insecure cookies."""
     frontend = os.environ.get("FRONTEND_URL", "")
     secure = frontend.startswith("https://")
     return {
@@ -73,7 +65,8 @@ class LoginInput(BaseModel):
 
 def _public_user(user: dict) -> dict:
     user = dict(user)
-    user["id"] = str(user.pop("_id"))
+    user["id"] = str(user.get("id") or user.get("_id"))
+    user.pop("_id", None)
     user.pop("password_hash", None)
     user.pop("push_subscriptions", None)
     return user
@@ -91,7 +84,7 @@ async def get_current_user(request: Request) -> dict:
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         if payload.get("type") != "access":
             raise HTTPException(status_code=401, detail="Invalid token type")
-        user = await _db.users.find_one({"_id": ObjectId(payload["sub"])})
+        user = store.get_user_by_id(payload["sub"])
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
         return _public_user(user)
@@ -102,7 +95,7 @@ async def get_current_user(request: Request) -> dict:
 
 
 async def _check_lockout(identifier: str):
-    rec = await _db.login_attempts.find_one({"identifier": identifier})
+    rec = store.get_login_attempt(identifier)
     if rec and rec.get("count", 0) >= 5:
         locked_until = rec.get("locked_until")
         if locked_until and datetime.now(timezone.utc) < datetime.fromisoformat(locked_until):
@@ -110,20 +103,20 @@ async def _check_lockout(identifier: str):
 
 
 async def _record_failure(identifier: str):
-    rec = await _db.login_attempts.find_one({"identifier": identifier})
-    count = (rec.get("count", 0) if rec else 0) + 1
+    rec = store.get_login_attempt(identifier) or {}
+    count = rec.get("count", 0) + 1
     update = {"count": count}
     if count >= 5:
         update["locked_until"] = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
-    await _db.login_attempts.update_one({"identifier": identifier}, {"$set": update}, upsert=True)
+    store.upsert_login_attempt(identifier, update)
 
 
 @auth_router.post("/register")
 async def register(data: RegisterInput, response: Response):
     email = data.email.lower()
-    if await _db.users.find_one({"email": email}):
+    if store.get_user_by_email(email):
         raise HTTPException(status_code=400, detail="Email already registered")
-    doc = {
+    doc = store.create_user({
         "email": email,
         "password_hash": hash_password(data.password),
         "name": data.name,
@@ -134,11 +127,9 @@ async def register(data: RegisterInput, response: Response):
         "emergency_contacts": [],
         "saved_locations": [],
         "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    result = await _db.users.insert_one(doc)
-    uid = str(result.inserted_id)
+    })
+    uid = doc["id"]
     set_auth_cookies(response, create_access_token(uid, email), create_refresh_token(uid))
-    doc["_id"] = result.inserted_id
     return _public_user(doc)
 
 
@@ -148,14 +139,12 @@ async def login(data: LoginInput, request: Request, response: Response):
     ip = request.client.host if request.client else "unknown"
     identifier = f"{ip}:{email}"
     await _check_lockout(identifier)
-    if _db is None:
-        raise HTTPException(status_code=500, detail="Auth DB not initialised")
-    user = await _db.users.find_one({"email": email})
+    user = store.get_user_by_email(email)
     if not user or not verify_password(data.password, user.get("password_hash", "")):
         await _record_failure(identifier)
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    await _db.login_attempts.delete_one({"identifier": identifier})
-    uid = str(user["_id"])
+    store.delete_login_attempt(identifier)
+    uid = user["id"]
     set_auth_cookies(response, create_access_token(uid, email), create_refresh_token(uid))
     return _public_user(user)
 
@@ -183,30 +172,35 @@ async def refresh(request: Request, response: Response):
             raise HTTPException(status_code=401, detail="Invalid token type")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
-    user = await _db.users.find_one({"_id": ObjectId(payload["sub"])})
+    user = store.get_user_by_id(payload["sub"])
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     flags = _cookie_flags()
     response.set_cookie(
         "access_token",
-        create_access_token(str(user["_id"]), user["email"]),
+        create_access_token(user["id"], user["email"]),
         max_age=900,
         **flags,
     )
     return {"ok": True}
 
 
-async def seed_admin(db):
+async def seed_admin():
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@heatshield.sg").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
-    existing = await db.users.find_one({"email": admin_email})
+    existing = store.get_user_by_email(admin_email)
     if existing is None:
-        await db.users.insert_one({
-            "email": admin_email, "password_hash": hash_password(admin_password),
-            "name": "Admin", "role": "admin", "user_type": "citizen",
+        store.create_user({
+            "email": admin_email,
+            "password_hash": hash_password(admin_password),
+            "name": "Admin",
+            "role": "admin",
+            "user_type": "citizen",
             "profile": {"age_group": "adult", "health_flags": [], "outdoor_exposure": "low"},
-            "onboarded": True, "emergency_contacts": [], "saved_locations": [],
+            "onboarded": True,
+            "emergency_contacts": [],
+            "saved_locations": [],
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
     elif not verify_password(admin_password, existing["password_hash"]):
-        await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_password)}})
+        store.update_user(existing["id"], set_fields={"password_hash": hash_password(admin_password)})
